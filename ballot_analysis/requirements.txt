@@ -1,0 +1,5 @@
+natsort
+numpy
+opencv-python
+pyzbar
+scipy
