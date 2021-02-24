@@ -37,9 +37,11 @@ def find_qr(im, qr_margin=400, debug=False):
         decoded_objects = pyzbar.decode(im_qr)
 
     # Could add search through list to find QR if list len > 1
-    assert len(decoded_objects) == 1, "No QR code found"
+    assert len(decoded_objects) == 1,\
+        "Not one QR code found, but {}".format(len(decoded_objects))
 
     if debug:
+        print("QR data: {}".format(decoded_objects[0].data))
         qr_rect = decoded_objects[0].rect
         im_roi = cv.rectangle(
             np.array(im_qr),
@@ -91,31 +93,22 @@ def find_lines(im_thresh, strel_len=400, do_vert=True):
     return cv.morphologyEx(im_lines, cv.MORPH_OPEN, line_struct)
 
 
-def get_vert_peaks(profile_vert, margin=25, height=.2, dist=25, debug=False):
+def get_vert_peaks(im_vert, margin=25, peak_min=.15, dist=25, debug=False):
     """
     From a 1D line profile from 2D image averaged over rows, find prominent
     peaks and assume those are the column start and stopping points in the image.
 
-    :param np.array profile_vert: 1D profile across image axis 0
+    :param np.array im_vert: Image with vertical lines
     :param int margin: Margin in pixel in which to ignore lines (boundary effects)
-    :param float height: Minimum peak height (intensity values [0, 1])
+    :param float peak_min: Minimum peak height [0, 1]
     :param int dist: Minimum distance in pixels between peaks
     :param bool debug: Make debug plot
     :return np.array peak_idxs: Beginning and end locations in pixels of
         columns [nbr cols, 2]
     """
-    peak_idxs, peak_vals = scipy.signal.find_peaks(profile_vert, height=height, distance=dist)
+    profile_vert = np.mean(im_vert, 0)
+    peak_idxs, peak_vals = scipy.signal.find_peaks(profile_vert, height=peak_min, distance=dist)
     assert len(peak_idxs) > 0, "No vertical lines detected"
-    # If peaks are weak it could be due to rotation
-    # Here's a temporary hack, but it would be better to detect rotations right away
-    if np.max(peak_vals['peak_heights']) < .3:
-        peak_idxs, peak_vals = scipy.signal.find_peaks(profile_vert, height=height * .75, distance=dist)
-
-    if debug:
-        plt.plot(np.arange(len(profile_vert)), profile_vert)
-        for p in peak_idxs:
-            plt.plot(p, profile_vert[p], 'r*', ms=8)
-        plt.show()
 
     # Remove outliers
     if peak_idxs[0] < margin:
@@ -124,49 +117,61 @@ def get_vert_peaks(profile_vert, margin=25, height=.2, dist=25, debug=False):
     if peak_idxs[-1] > len(profile_vert) - margin:
         peak_idxs = peak_idxs[:-1]
 
+    if debug:
+        plt.plot(np.arange(len(profile_vert)), profile_vert)
+        for p in peak_idxs:
+            plt.plot(p, profile_vert[p], 'r*', ms=8)
+        plt.show()
+
     assert len(peak_idxs) in set([2, 4, 6]), \
         "wrong number of vertical lines detected: {}".format(len(peak_idxs))
     return np.reshape(peak_idxs, (-1, 2))
 
 
-def get_hor_peaks(profile_hor, margin=300, height=.5, dist=25, debug=False):
+def get_hor_peaks(im_column, margin=300, height=.3, dist=25, debug=False):
     """
     From a 1D profile of a 2D image averaged over columns, find prominent
     peaks and assume they are the horizontal start and stopping points
     of boxes in columns.
 
-    :param np.array profile_hor: 1D profile across image axis 1
+    :param np.array im_column: Image ROI with horizontal lines enhanced
     :param int margin: Margin in pixels to ignore at bottom of image
-    :param int height: Minimum height of peaks (intensity range [0, 1])
+    :param int height: Minimum height of peaks as percentage of profile intensity max (intensity range [0, 1])
     :param int dist: Minimum distance in pixel between peaks
+    :param bool debug: Make debug plot
     :return np.array peak_idxs: Beginning and end locations in pixels of
         columns [nbr cols, 2]
     """
-    peak_idxs, peak_vals = scipy.signal.find_peaks(profile_hor, height=height, distance=dist)
+    profile_hor = np.mean(im_column, 1)
+    peak_min = height * np.max(profile_hor)
+    peak_idxs, peak_vals = scipy.signal.find_peaks(profile_hor, height=peak_min, distance=dist)
     peak_vals = peak_vals['peak_heights']
     if len(peak_idxs) <= 1:
         print("Only found {} horizontal lines detected, proceeding "
               "with whole length of column".format(len(peak_idxs)))
         return np.array([[0, len(profile_hor)]])
-    # Hacky way to remove lines that aren't connected to bounding boxes
-    if len(profile_hor) - peak_idxs[-1] < margin:
-        peak_idxs = peak_idxs[:-1]
-        peak_vals = peak_vals[:-1]
+    # Remove line at the bottom of ballot
+    bottom_lines = np.where(len(profile_hor) - peak_idxs < margin)[0]
+    peak_idxs = np.delete(peak_idxs, bottom_lines)
+    peak_vals = np.delete(peak_vals, bottom_lines)
+    peak_idxs0 = peak_idxs
 
-    if debug:
-        plt.plot(np.arange(len(profile_hor)), profile_hor)
-        for p in peak_idxs:
-            plt.plot(p, profile_hor[p], 'r*', ms=8)
-        plt.show()
-
-    # Check box sizes (remove write-in lines)
+    # Check peak amplitudes and remove lesser peaks (remove write-in lines)
     pos = 0
     while pos < len(peak_idxs) - 2:
-        if (peak_idxs[pos + 2] - peak_idxs[pos + 1]) and \
-                (peak_vals[pos + 2] > peak_vals[pos + 1]):
+        if (peak_idxs[pos + 2] - peak_idxs[pos + 1] < 125) and \
+                (.85 * peak_vals[pos + 2] > peak_vals[pos + 1]):
             peak_idxs = np.delete(peak_idxs, pos + 1)
             peak_vals = np.delete(peak_vals, pos + 1)
         pos += 1
+
+    if debug:
+        plt.plot(np.arange(len(profile_hor)), profile_hor)
+        for p in peak_idxs0:
+            plt.plot(p, profile_hor[p], 'r*', ms=8)
+        for p in peak_idxs:
+            plt.plot(p, profile_hor[p], 'g*', ms=8)
+        plt.show()
 
     if len(peak_idxs) % 2 == 1:
         print("Wrong number of horizontal lines detected {}, proceeding "
@@ -383,7 +388,6 @@ def ballot_analyzer(args):
         assert 0 <= file_idx < len(file_names),\
             "File idx {} doesn't work".format(file_idx)
         file_names = [file_names[file_idx]]
-        print(file_names)
 
     for file_name in file_names:
         start_time = time.time()
@@ -423,13 +427,12 @@ def ballot_analyzer(args):
 
         # Compress horizontal and vertical images to 1D profiles and
         # detect boxes as maxima
-        profile_vert = np.mean(im_vert, 0)
-        # Find vertical peaks
         try:
-            peak_idxs = get_vert_peaks(profile_vert, debug=debug)
+            peak_idxs = get_vert_peaks(im_vert, debug=debug)
         except AssertionError as e:
             print("Failed to detect correct vertical lines", e)
             # Write profile where error occurred
+            profile_vert = np.mean(im_vert, 0)
             plt.plot(np.arange(len(profile_vert)), profile_vert)
             fig_save = plt.gcf()
             debug_name = os.path.join(output_dir, im_name + "_vert_profile.png")
@@ -442,15 +445,17 @@ def ballot_analyzer(args):
             # Get horizontal lines profile for column
             coords_col = peak_idxs[col, :]
             im_column = im_hor[:, coords_col[0]: coords_col[1]]
-            profile_hor = np.mean(im_column, 1)
-            # plt.plot(np.arange(len(profile_hor)), profile_hor); plt.show()
-            hor_peak_idxs = get_hor_peaks(profile_hor)
+            hor_peak_idxs = get_hor_peaks(im_column, debug=debug)
 
             for row in range(hor_peak_idxs.shape[0]):
                 coords_row = hor_peak_idxs[row, :]
                 # Get left 20% of box (that's where the fill-in boxes are)
                 col_width = coords_col[0] + int((coords_col[1] - coords_col[0]) / 5)
                 im_markers = im_gray[coords_row[0]:coords_row[1], coords_col[0]:col_width]
+                marker_shape = im_markers.shape
+                if marker_shape[0] <= template_shape[0] or marker_shape[1] <= template_shape[1]:
+                    print("Image ROI too small for marker detection")
+                    continue
                 # Search for empty boxes with empty ellipse template
                 im_conv = conv_and_norm(im_markers, template)
                 keypoints = max_detector.detect(im_conv)
@@ -464,7 +469,8 @@ def ballot_analyzer(args):
         print("Processing time: {:.3f} s".format(time.time() - start_time))
         # Write debug image
         cv.imwrite(os.path.join(output_dir, im_name + "_debug.png"), im_boxes)
-        # plt.imshow(im_boxes); plt.show()
+        if debug:
+            plt.imshow(im_boxes); plt.show()
 
 
 if __name__ == '__main__':
