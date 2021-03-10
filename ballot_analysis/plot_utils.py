@@ -15,7 +15,7 @@ def plot_hough_lines(im, im_output, plot_color):
     :param np.array im_output: Image to add overlays to
     :param tuple plot_color: RGB values for plot overlays
     """
-    lines = cv.HoughLinesP(im, 1, np.pi/180, 10, minLineLength=500, maxLineGap=30)
+    lines = cv.HoughLinesP(im, 1, np.pi/180, 50, minLineLength=500, maxLineGap=30)
     for line in lines:
         for x1, y1, x2, y2 in line:
             cv.line(im_output, (x1, y1), (x2, y2), plot_color, 3)

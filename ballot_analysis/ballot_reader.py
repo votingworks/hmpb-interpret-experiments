@@ -75,7 +75,7 @@ def ballot_analyzer(args):
     # Instantiate spot detectors and create filter
     max_detector = im_proc.make_max_detector()
     max_detector_filled = im_proc.make_max_detector(min_area=250)
-    log_filter = im_proc.make_log_filter()
+    log_filter = im_proc.make_log_filter(sigma_gauss=5)
 
     file_names = natsort.natsorted(
         glob.glob(os.path.join(input_dir, '*original.png'),)
@@ -85,36 +85,38 @@ def ballot_analyzer(args):
             "File idx {} doesn't work".format(file_idx)
         file_names = [file_names[file_idx]]
 
-    for file_name in file_names:
+    for idx, file_name in enumerate(file_names):
         start_time = time.time()
         im_name = os.path.basename(file_name)[:-4]
-        print("Analyzing: {}".format(im_name))
+        print("Analyzing idx: {}, name: {}".format(idx, im_name))
         im = cv.imread(file_name)
         # Check if images are upside down by finding QR code
-        try:
-            rotate_180 = im_proc.find_qr(im=im, debug=debug)
-        except AssertionError:
-            print("Can't find QR for {}".format(file_name))
-            continue
+        # try:
+        rotate_180 = im_proc.find_qr(im=im, debug=debug)
+        # except AssertionError:
+        #     print("Can't find QR for {}".format(file_name))
+        #     continue
         if rotate_180:
             im = np.rot90(im, 2)
-        # Convert to grayscale
-        im_gray = cv.cvtColor(im, cv.COLOR_BGR2GRAY)
         # Rotate image based on angle of bottom line in ballot
-        im_gray = im_proc.get_angle_and_rotate(im_gray, log_filter)
+        im_gray = im_proc.get_angle_and_rotate(
+            im,
+            log_filter,
+            debug,
+        )
+        cv.imwrite('im_original.png', im)
+        cv.imwrite('im_rotated.png', im_gray)
         if debug:
             plt.imshow(im_gray, cmap='gray'); plt.show()
+        # Filter and threshold rotated image
         im_thresh = im_proc.filter_and_thresh(im_gray, log_filter)
 
         # Find horizontal and vertical lines
         im_hor = im_proc.find_lines(im_thresh, strel_len=200, do_vert=False)
         im_vert = im_proc.find_lines(im_thresh, strel_len=200, do_vert=True)
-        if debug:
-            plt.imshow(im_hor, cmap='gray'); plt.show()
-            plt.imshow(im_vert, cmap='gray'); plt.show()
 
         # For plotting only
-        im_boxes = np.array(im.copy())
+        im_boxes = np.array(cv.cvtColor(im_gray, cv.COLOR_GRAY2RGB))
         # Plot detected horizontal and vertical lines
         plt_utils.plot_hough_lines(im_hor, im_boxes, (255, 0, 0))
         plt_utils.plot_hough_lines(im_vert, im_boxes, (0, 255, 0))

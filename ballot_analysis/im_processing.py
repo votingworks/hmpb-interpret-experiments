@@ -72,6 +72,14 @@ def make_log_filter(sigma_gauss=5):
 
 
 def filter_and_thresh(im_gray, log_filter):
+    """
+    Filter an image with a Laplacian of Gaussian then threshold based
+    on intensity standard deviation.
+
+    :param np.array im_gray: Grayscale 2D image (uint8)
+    :param np.array log_filter: LoG filter
+    :return np.array im_thresh: Filtered and thresholded image
+    """
     max_intensity = im_gray.max()
     im_norm = (max_intensity - im_gray) / max_intensity
     # Filter with Laplacian of Gaussian
@@ -90,6 +98,7 @@ def find_lines(im_thresh, strel_len=400, do_vert=True):
     :param np.array im_thresh: Thresholded uint8 image
     :param int strel_len: Length of structuring element line
     :param bool do_vert: Use vertical line as structuring element
+    :return np.array im: Image with horizontal or vertical lines
     """
     im_lines = im_thresh.copy()
     strel_shape = (strel_len, 1)
@@ -99,26 +108,55 @@ def find_lines(im_thresh, strel_len=400, do_vert=True):
     return cv.morphologyEx(im_lines, cv.MORPH_OPEN, line_struct)
 
 
-def get_angle_and_rotate(im_gray, log_filter):
+def get_angle_and_rotate(im, log_filter, debug=False):
+    """
+    Assuming that there are always some horizontal lines at the top of the
+    ballot, this function finds Hough lines from a filtered and thresholded
+    image and computes their angles.
+    The ballot gets rotated by the median of the found line angles.
+
+    :param np.array im: Color ballot image
+    :param np.array log_filter: Laplacian of Gaussian filter
+    :param bool debug: Determines if debug plot will be made
+    :return np.array im_gray: Rotated ballot image
+    """
+    im_gray = cv.cvtColor(im, cv.COLOR_BGR2GRAY)
     im_thresh = filter_and_thresh(im_gray[25:125, :], log_filter)
     lines = cv.HoughLinesP(
-        im_thresh, 1, np.pi / 180, 10, minLineLength=500, maxLineGap=30,
+        im_thresh,
+        rho=1,
+        theta=np.pi / 1440,
+        threshold=80,
+        minLineLength=500,
+        maxLineGap=30,
     )
+    im_output = cv.cvtColor(im_gray[25:125, :], cv.COLOR_GRAY2RGB)
     angles = []
     for line in lines:
         for x1, y1, x2, y2 in line:
+            cv.line(im_output, (x1, y1), (x2, y2), (255, 0, 0), 3)
             angle = math.atan((y2 - y1) / (x2 - x1)) * 180 / math.pi
-            angles.append(angle)
+            if abs(angle) < 3:
+                angles.append(angle)
+    if debug:
+        plt.imshow(im_output); plt.show()
+    if len(angles) == 0:
+        angles = [0]
     angle = np.median(angles)
-    print(angles)
-    print('median', angle)
-    return warp_image(im_gray, angle)
+    print("median of {} lines: {:.3f}".format(len(angles), angle))
+    if angle != .0:
+        im_gray = rotate_image(im_gray, angle)
+    return im_gray
 
 
-def warp_image(im, angle):
+def rotate_image(im, angle):
     """
     Create a 2D translation matrix from angle.
     Rotate around center of image.
+
+    :param np.array im: Image
+    :param float angle: Angle in degrees
+    :return np.array im_rot: Rotated image
     """
     im_shape = im.shape
     a = np.cos(angle * np.pi / 180)
@@ -132,7 +170,7 @@ def warp_image(im, angle):
     return im_rot
 
 
-def get_vert_peaks(im_vert, margin=40, peak_min=.15, dist=25, debug=False):
+def get_vert_peaks(im_vert, margin=35, peak_min=.15, dist=25, debug=False):
     """
     From a 1D line profile from 2D image averaged over rows, find prominent
     peaks and assume those are the column start and stopping points in the image.
@@ -197,6 +235,10 @@ def get_hor_peaks(im_column,
         distance=dist,
     )
     peak_vals = peak_vals['peak_heights']
+    # Remove outlier at the top
+    if peak_idxs[0] < 25:
+        peak_idxs = peak_idxs[1:]
+        peak_vals = peak_vals[1:]
     if len(peak_idxs) <= 1:
         print("Only found {} horizontal lines detected, proceeding "
               "with whole length of column".format(len(peak_idxs)))
