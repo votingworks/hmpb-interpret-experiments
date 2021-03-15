@@ -91,11 +91,11 @@ def ballot_analyzer(args):
         print("Analyzing idx: {}, name: {}".format(idx, im_name))
         im = cv.imread(file_name)
         # Check if images are upside down by finding QR code
-        # try:
-        rotate_180 = im_proc.find_qr(im=im, debug=debug)
-        # except AssertionError:
-        #     print("Can't find QR for {}".format(file_name))
-        #     continue
+        try:
+            rotate_180 = im_proc.find_qr(im=im, debug=debug)
+        except AssertionError:
+            print("Can't find QR for {}".format(file_name))
+            continue
         if rotate_180:
             im = np.rot90(im, 2)
         # Rotate image based on angle of bottom line in ballot
@@ -104,8 +104,6 @@ def ballot_analyzer(args):
             log_filter,
             debug,
         )
-        cv.imwrite('im_original.png', im)
-        cv.imwrite('im_rotated.png', im_gray)
         if debug:
             plt.imshow(im_gray, cmap='gray'); plt.show()
         # Filter and threshold rotated image
