@@ -143,7 +143,6 @@ def get_angle_and_rotate(im, log_filter, debug=False):
     if len(angles) == 0:
         angles = [0]
     angle = np.median(angles)
-    print("median of {} lines: {:.3f}".format(len(angles), angle))
     if angle != .0:
         im_gray = rotate_image(im_gray, angle)
     return im_gray
