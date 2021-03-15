@@ -68,8 +68,8 @@ def ballot_analyzer(args):
     os.makedirs(output_dir, exist_ok=True)
 
     # Read template
-    template = cv.imread('marker_template.png', cv.IMREAD_GRAYSCALE)
-    template_filled = cv.imread('filled_template.png', cv.IMREAD_GRAYSCALE)
+    template = cv.imread('ballot_analysis/marker_template.png', cv.IMREAD_GRAYSCALE)
+    template_filled = cv.imread('ballot_analysis/filled_template.png', cv.IMREAD_GRAYSCALE)
     template_shape = template.shape
 
     # Instantiate spot detectors and create filter

@@ -121,7 +121,7 @@ def get_angle_and_rotate(im, log_filter, debug=False):
     :return np.array im_gray: Rotated ballot image
     """
     im_gray = cv.cvtColor(im, cv.COLOR_BGR2GRAY)
-    im_thresh = filter_and_thresh(im_gray[25:125, :], log_filter)
+    im_thresh = filter_and_thresh(im_gray[25:150, :], log_filter)
     lines = cv.HoughLinesP(
         im_thresh,
         rho=1,
@@ -170,7 +170,50 @@ def rotate_image(im, angle):
     return im_rot
 
 
-def get_vert_peaks(im_vert, margin=35, peak_min=.15, dist=25, debug=False):
+def remove_border_lines(profile, peak_idxs, start_margin, end_margin):
+    """
+    Remove lines that are too close to the border
+    """
+    border_lines = np.where(peak_idxs < start_margin)[0]
+    peak_idxs = np.delete(peak_idxs, border_lines)
+    border_lines = np.where(len(profile) - peak_idxs < end_margin)[0]
+    peak_idxs = np.delete(peak_idxs, border_lines)
+    assert len(peak_idxs) > 0, "No lines detected"
+    return peak_idxs
+
+
+def remove_neighbor_peaks(peak_idxs, line_margin=125):
+    """
+    :param int line_margin: Distance in pixels between neighboring lines
+    """
+    pos = 0
+    while pos < len(peak_idxs) - 1:
+        if peak_idxs[pos + 1] - peak_idxs[pos] < line_margin:
+            peak_idxs = np.delete(peak_idxs, pos)
+            pos += 1
+        else:
+            pos += 2
+    return peak_idxs
+
+
+def remove_writein_lines(peak_idxs, line_margin=125):
+    """
+    Remove write-in lines starting from bottom
+    """
+    pos = len(peak_idxs) - 1
+    while pos > 0:
+        if peak_idxs[pos] - peak_idxs[pos - 1] < line_margin:
+            peak_idxs = np.delete(peak_idxs, pos - 1)
+            pos -= 1
+        pos -= 2
+    return peak_idxs
+
+
+def get_vert_peaks(im_vert,
+                   margin=30,
+                   peak_min=.15,
+                   dist=25,
+                   debug=False):
     """
     From a 1D line profile from 2D image averaged over rows, find prominent
     peaks and assume those are the column start and stopping points in the image.
@@ -184,17 +227,15 @@ def get_vert_peaks(im_vert, margin=35, peak_min=.15, dist=25, debug=False):
         columns [nbr cols, 2]
     """
     profile_vert = np.mean(im_vert, 0)
-    peak_idxs, peak_vals = scipy.signal.find_peaks(
+    peak_idxs, _ = scipy.signal.find_peaks(
         profile_vert,
         height=peak_min,
         distance=dist,
     )
     # Remove outliers
-    if peak_idxs[0] < margin:
-        peak_idxs = peak_idxs[1:]
+    peak_idxs = remove_border_lines(profile_vert, peak_idxs, margin, margin)
+    peak_idxs = remove_neighbor_peaks(peak_idxs)
     assert len(peak_idxs) > 0, "No vertical lines detected"
-    if peak_idxs[-1] > len(profile_vert) - margin:
-        peak_idxs = peak_idxs[:-1]
 
     if debug:
         plt.plot(np.arange(len(profile_vert)), profile_vert)
@@ -211,7 +252,6 @@ def get_hor_peaks(im_column,
                   margin=300,
                   height=.3,
                   dist=25,
-                  writein_margin=125,
                   debug=False):
     """
     From a 1D profile of a 2D image averaged over columns, find prominent
@@ -222,58 +262,27 @@ def get_hor_peaks(im_column,
     :param int margin: Margin in pixels to ignore at bottom of image
     :param int height: Minimum height of peaks as percentage of profile intensity max (intensity range [0, 1])
     :param int dist: Minimum distance in pixel between peaks
-    :param int writein_margin: Distance in pixels between writein line and box bottom
     :param bool debug: Make debug plot
     :return np.array peak_idxs: Beginning and end locations in pixels of
         columns [nbr cols, 2]
     """
     profile_hor = np.mean(im_column, 1)
     peak_min = height * np.max(profile_hor)
-    peak_idxs, peak_vals = scipy.signal.find_peaks(
+    peak_idxs, _ = scipy.signal.find_peaks(
         profile_hor,
         height=peak_min,
         distance=dist,
     )
-    peak_vals = peak_vals['peak_heights']
-    # Remove outlier at the top
-    if peak_idxs[0] < 25:
-        peak_idxs = peak_idxs[1:]
-        peak_vals = peak_vals[1:]
+    # Remove outliers
+    peak_idxs = remove_border_lines(profile_hor, peak_idxs, 25, margin)
     if len(peak_idxs) <= 1:
         print("Only found {} horizontal lines detected, proceeding "
               "with whole length of column".format(len(peak_idxs)))
         return np.array([[0, len(profile_hor)]])
-    # Remove line at the bottom of ballot
-    bottom_lines = np.where(len(profile_hor) - peak_idxs < margin)[0]
-    peak_idxs = np.delete(peak_idxs, bottom_lines)
-    peak_vals = np.delete(peak_vals, bottom_lines)
     peak_idxs0 = peak_idxs
 
-    # Check peak amplitudes and remove lesser peaks (remove write-in lines)
-    pos = 1
-    while pos < len(peak_idxs) - 2:
-        if (peak_idxs[pos + 1] - peak_idxs[pos] < writein_margin) and \
-           (.9 * peak_vals[pos + 1] > peak_vals[pos]) and \
-           (peak_idxs[pos + 2] - peak_idxs[pos + 1] < writein_margin):
-            peak_idxs = np.delete(peak_idxs, pos)
-            peak_vals = np.delete(peak_vals, pos)
-        pos += 1
-    # Check last line
-    if len(peak_idxs) % 2 == 1:
-        if (peak_idxs[-1] - peak_idxs[-2] < writein_margin) and \
-           (.9 * peak_vals[-1] > peak_vals[-2]):
-            peak_idxs = np.delete(peak_idxs, len(peak_idxs) - 2)
-            peak_vals = np.delete(peak_vals, len(peak_idxs) - 2)
-
-    # Remove write-in lines starting from bottom
-    pos = len(peak_idxs) - 1
-    while pos > 0:
-        if len(peak_idxs) % 2 == 1:
-            if (peak_idxs[pos] - peak_idxs[pos - 1] < writein_margin) and \
-                    (peak_vals[pos] > peak_vals[pos - 1]):
-                peak_idxs = np.delete(peak_idxs, pos - 1)
-                peak_vals = np.delete(peak_vals, pos - 1)
-        pos -= 2
+    peak_idxs = remove_writein_lines(peak_idxs)
+    peak_idxs = remove_neighbor_peaks(peak_idxs)
 
     if debug:
         plt.plot(np.arange(len(profile_hor)), profile_hor)
@@ -287,7 +296,7 @@ def get_hor_peaks(im_column,
         print("Wrong number of horizontal lines detected {}, proceeding "
               "with whole length of column".format(len(peak_idxs)))
         if len(peak_idxs) == 1:
-            peak_idxs = np.array([[peak_idxs[0], im_shape[0] - margin]])
+            peak_idxs = np.array([[peak_idxs[0], len(profile_hor) - margin]])
         else:
             peak_idxs = np.array([[peak_idxs[0], peak_idxs[-1]]])
     else:
