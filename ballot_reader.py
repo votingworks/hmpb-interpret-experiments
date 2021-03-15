@@ -10,8 +10,8 @@ import matplotlib as mpl
 mpl.use('tkagg')  # Hack to make mpl work with Big Sur
 import matplotlib.pyplot as plt
 
-import im_processing as im_proc
-import plot_utils as plt_utils
+import ballot_analysis.im_processing as im_proc
+import ballot_analysis.plot_utils as plt_utils
 
 
 def parse_args():
