@@ -130,6 +130,8 @@ def get_angle_and_rotate(im, log_filter, debug=False):
         minLineLength=500,
         maxLineGap=30,
     )
+    if lines is None:
+        return im_gray
     im_output = cv.cvtColor(im_gray[25:125, :], cv.COLOR_GRAY2RGB)
     angles = []
     for line in lines:
@@ -403,3 +405,32 @@ def conv_and_norm(im_markers, template):
     im_conv = cv.matchTemplate(im_markers, template, cv.TM_CCOEFF_NORMED)
     im_conv[im_conv < 0] = 0
     return (im_conv * 255).astype(np.uint8)
+
+
+def get_ellipses(im_markers, start_coord, im_output):
+    """
+    Initial attempt at getting all ellipses
+    """
+    im_thresh = (im_markers < 50).astype(np.uint8)
+    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+    im_roi = cv.morphologyEx(im_thresh, cv.MORPH_CLOSE, kernel)
+    nbr_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
+        im_roi,
+        4,
+        cv.CV_32S,
+    )
+    for label in range(nbr_labels):
+        x = stats[label, cv.CC_STAT_LEFT]
+        y = stats[label, cv.CC_STAT_TOP]
+        w = stats[label, cv.CC_STAT_WIDTH]
+        h = stats[label, cv.CC_STAT_HEIGHT]
+        a = stats[label, cv.CC_STAT_AREA]
+        if (50 < w < 100) and (40 < h < 70):
+            cv.rectangle(
+                im_output,
+                (start_coord[0] + x, start_coord[1] + y),
+                (start_coord[0] + x + w, start_coord[1] + y + h),
+                (255, 0, 255),
+                3,
+            )
+    # plt.imshow(im_output); plt.show()

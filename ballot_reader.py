@@ -141,6 +141,10 @@ def ballot_analyzer(args):
                 # Get left 20% of box (that's where the fill-in boxes are)
                 col_width = coords_col[0] + int((coords_col[1] - coords_col[0]) / 5)
                 im_markers = im_gray[coords_row[0]:coords_row[1], coords_col[0]:col_width]
+                # TODO: Replace template matching with classifier
+                # im_proc.get_ellipses(im_markers, (coords_col[0], coords_row[0]), im_boxes)
+                # Just plotting detected ellipses for now
+                # TODO: Create classifier from detected ellipses
                 marker_shape = im_markers.shape
                 if marker_shape[0] <= template_shape[0] or marker_shape[1] <= template_shape[1]:
                     print("Image ROI too small for marker detection")
