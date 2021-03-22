@@ -1,8 +1,10 @@
 import cv2 as cv
 import math
 import numpy as np
+import os
 import pyzbar.pyzbar as pyzbar
 import scipy.signal
+from scipy.ndimage.morphology import binary_fill_holes
 
 import matplotlib as mpl
 mpl.use('tkagg')  # Hack to make mpl work with Big Sur
@@ -48,7 +50,10 @@ def find_qr(im, qr_margin=400, debug=False):
         )
         plt.imshow(im_roi)
         plt.show()
-    return rotate_180
+
+    if rotate_180:
+        im = np.rot90(im, 2)
+    return im
 
 
 def make_log_filter(sigma_gauss=5):
@@ -407,30 +412,93 @@ def conv_and_norm(im_markers, template):
     return (im_conv * 255).astype(np.uint8)
 
 
-def get_ellipses(im_markers, start_coord, im_output):
+def get_ellipses(im_markers, start_coord, margin=5):
     """
-    Initial attempt at getting all ellipses
+    Get all ellipses by thresholding followed by hole filling.
+    Filter out those of appropriate width and height.
     """
-    im_thresh = (im_markers < 50).astype(np.uint8)
-    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
-    im_roi = cv.morphologyEx(im_thresh, cv.MORPH_CLOSE, kernel)
+    im_thresh = im_markers[margin:-margin, margin:-margin]
+    im_thresh = (im_thresh < 50).astype(np.uint8)
+    im_roi = binary_fill_holes(im_thresh).astype(np.uint8)
+    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (15, 15))
+    im_roi = cv.morphologyEx(im_roi, cv.MORPH_OPEN, kernel)
     nbr_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
         im_roi,
         4,
         cv.CV_32S,
     )
+    ellipses = []
+    feat_mat = np.zeros((nbr_labels, 2))
+    count = 0
     for label in range(nbr_labels):
         x = stats[label, cv.CC_STAT_LEFT]
         y = stats[label, cv.CC_STAT_TOP]
         w = stats[label, cv.CC_STAT_WIDTH]
         h = stats[label, cv.CC_STAT_HEIGHT]
-        a = stats[label, cv.CC_STAT_AREA]
-        if (50 < w < 100) and (40 < h < 70):
-            cv.rectangle(
-                im_output,
-                (start_coord[0] + x, start_coord[1] + y),
-                (start_coord[0] + x + w, start_coord[1] + y + h),
-                (255, 0, 255),
-                3,
-            )
-    # plt.imshow(im_output); plt.show()
+        if (50 < w < 100) and (30 < h < 90):
+            im_out = im_markers[
+                     y + margin:y + h + margin,
+                     x + margin:x + w + margin,
+                     ]
+            feat_mat[count, 0] = np.mean(im_out)
+            feat_mat[count, 1] = np.std(im_out)
+            ellipses.append({'x': start_coord[0] + x + margin,
+                             'y': start_coord[1] + y + margin,
+                             'w': w,
+                             'h': h})
+            count += 1
+
+            # im_name = 'im_{}_{}.png'.format(idx, counter)
+            # counter += 1
+            # cv.imwrite(os.path.join(write_dir, im_name), im_out)
+            # cv.rectangle(
+            #     im_output,
+            #     (start_coord[0] + x + margin, start_coord[1] + y + margin),
+            #     (start_coord[0] + x + w + margin, start_coord[1] + y + h + margin),
+            #     (255, 0, 255),
+            #     3,
+            # )
+
+    feat_mat = feat_mat[:count, :]
+    return feat_mat, ellipses
+
+
+def compute_features(dir_name):
+    """
+    Only used for training classifier.
+    """
+    import glob
+    import natsort
+
+    file_names = natsort.natsorted(
+        glob.glob(os.path.join(dir_name, '*.png'),)
+    )
+    feat_mat = np.zeros((len(file_names), 2))
+    for i, file_name in enumerate(file_names):
+        im = cv.imread(file_name)
+        feat_mat[i, 0] = np.mean(im)
+        feat_mat[i, 1] = np.std(im)
+    return feat_mat
+
+
+def make_classifier(dir_name0, dir_name1):
+    """
+    Only used for training classifier.
+    Currently trained on image indices 6, 7, 8, 84, 104
+    """
+    from sklearn.linear_model import LogisticRegression
+    import pickle
+
+    feat_mat0 = compute_features(dir_name0)
+    feat_mat1 = compute_features(dir_name1)
+    y = np.squeeze(np.vstack(
+        [np.zeros((feat_mat0.shape[0], 1)),
+         np.ones((feat_mat1.shape[0], 1))],
+    ))
+    x = np.vstack([feat_mat0, feat_mat1])
+    model = LogisticRegression()
+    model.fit(x, y)
+    filename = 'lr_model.sav'
+    pickle.dump(model, open(filename, 'wb'))
+
+

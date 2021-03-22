@@ -40,6 +40,21 @@ def plot_boxes(im_boxes, keypoints, coords_col, coords_row, template_shape, plot
         cv.rectangle(im_boxes, pt, pt2, plot_col, 5)
 
 
+def plot_ellipses(im_boxes, ellipses, labels):
+    """
+    For all the detected ellipses, plot rectangles and classification
+    result. Filled in magenta, empty in cyan.
+    """
+    for idx in range(len(ellipses)):
+        ellipse = ellipses[idx]
+        pt = (ellipse['x'], ellipse['y'])
+        pt2 = (ellipse['x'] + ellipse['w'], ellipse['y'] + ellipse['h'])
+        plot_col = (255, 255, 0)
+        if labels[idx] == 1:
+            plot_col = (255, 0, 255)
+        cv.rectangle(im_boxes, pt, pt2, plot_col, 5)
+
+
 def write_debug_profile(im_vert, output_dir, im_name):
     debug_name = os.path.join(output_dir, im_name + "_vert_profile.png")
     profile_vert = np.mean(im_vert, 0)

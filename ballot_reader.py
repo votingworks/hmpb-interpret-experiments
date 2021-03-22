@@ -4,6 +4,7 @@ import glob
 import natsort
 import numpy as np
 import os
+import pickle
 import time
 
 import matplotlib as mpl
@@ -67,14 +68,9 @@ def ballot_analyzer(args):
     output_dir = os.path.join(input_dir, 'analysis_debug')
     os.makedirs(output_dir, exist_ok=True)
 
-    # Read template
-    template = cv.imread('ballot_analysis/marker_template.png', cv.IMREAD_GRAYSCALE)
-    template_filled = cv.imread('ballot_analysis/filled_template.png', cv.IMREAD_GRAYSCALE)
-    template_shape = template.shape
-
-    # Instantiate spot detectors and create filter
-    max_detector = im_proc.make_max_detector()
-    max_detector_filled = im_proc.make_max_detector(min_area=250)
+    # Load logistic regression model
+    lr_model = pickle.load(open('ballot_analysis/lr_model.sav', 'rb'))
+    # Create LoG filter
     log_filter = im_proc.make_log_filter(sigma_gauss=5)
 
     file_names = natsort.natsorted(
@@ -92,12 +88,10 @@ def ballot_analyzer(args):
         im = cv.imread(file_name)
         # Check if images are upside down by finding QR code
         try:
-            rotate_180 = im_proc.find_qr(im=im, debug=debug)
+            im = im_proc.find_qr(im=im, debug=debug)
         except AssertionError:
             print("Can't find QR for {}".format(file_name))
             continue
-        if rotate_180:
-            im = np.rot90(im, 2)
         # Rotate image based on angle of bottom line in ballot
         im_gray = im_proc.get_angle_and_rotate(
             im,
@@ -119,8 +113,7 @@ def ballot_analyzer(args):
         plt_utils.plot_hough_lines(im_hor, im_boxes, (255, 0, 0))
         plt_utils.plot_hough_lines(im_vert, im_boxes, (0, 255, 0))
 
-        # Compress horizontal and vertical images to 1D profiles and
-        # detect boxes as maxima
+        # Create 1D profiles of lines and detect boxes as maxima
         try:
             peak_idxs = im_proc.get_vert_peaks(im_vert, debug=debug)
         except AssertionError as e:
@@ -141,37 +134,16 @@ def ballot_analyzer(args):
                 # Get left 20% of box (that's where the fill-in boxes are)
                 col_width = coords_col[0] + int((coords_col[1] - coords_col[0]) / 5)
                 im_markers = im_gray[coords_row[0]:coords_row[1], coords_col[0]:col_width]
-                # TODO: Replace template matching with classifier
-                # im_proc.get_ellipses(im_markers, (coords_col[0], coords_row[0]), im_boxes)
-                # Just plotting detected ellipses for now
-                # TODO: Create classifier from detected ellipses
-                marker_shape = im_markers.shape
-                if marker_shape[0] <= template_shape[0] or marker_shape[1] <= template_shape[1]:
-                    print("Image ROI too small for marker detection")
-                    continue
-                # Search for empty boxes with empty ellipse template
-                im_conv = im_proc.conv_and_norm(im_markers, template)
-                keypoints = max_detector.detect(im_conv)
-                plt_utils.plot_boxes(
-                    im_boxes,
-                    keypoints,
-                    coords_col,
-                    coords_row,
-                    template_shape,
-                    (255, 255, 0),
+                # Extract ellipses and classify them
+                feat_mat, ellipses = im_proc.get_ellipses(
+                    im_markers,
+                    (coords_col[0], coords_row[0]),
                 )
-                # Search for filled in boxes with filled elliptical template
-                im_conv_filled = im_proc.conv_and_norm(im_markers, template_filled)
-                keypoints = max_detector_filled.detect(im_conv_filled)
-                plt_utils.plot_boxes(
-                    im_boxes,
-                    keypoints,
-                    coords_col,
-                    coords_row,
-                    template_shape,
-                    (255, 0, 255),
-                )
-                # TODO: store box coordinates and filled/empty values
+                # Do binary classification for now
+                labels = lr_model.predict(feat_mat)
+                # Plot results
+                plt_utils.plot_ellipses(im_boxes, ellipses, labels)
+                # TODO: store box + ellipse coordinates and filled/empty values
 
         print("Processing time: {:.3f} s".format(time.time() - start_time))
         # Write debug image
