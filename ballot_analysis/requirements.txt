@@ -1,6 +1,7 @@
 natsort
 numpy
 opencv-python
+pandas
 pyzbar
 scipy
 scikit-learn

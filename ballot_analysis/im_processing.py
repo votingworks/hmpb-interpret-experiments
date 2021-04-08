@@ -216,7 +216,7 @@ def remove_writein_lines(peak_idxs, line_margin=125):
 
 
 def get_vert_peaks(im_vert,
-                   margin=30,
+                   margin=25,
                    peak_min=.15,
                    dist=25,
                    debug=False):
@@ -232,7 +232,7 @@ def get_vert_peaks(im_vert,
     :return np.array peak_idxs: Beginning and end locations in pixels of
         columns [nbr cols, 2]
     """
-    profile_vert = np.mean(im_vert, 0)
+    profile_vert = np.mean(im_vert[100:-500, :], 0)
     peak_idxs, _ = scipy.signal.find_peaks(
         profile_vert,
         height=peak_min,
@@ -249,6 +249,11 @@ def get_vert_peaks(im_vert,
             plt.plot(p, profile_vert[p], 'g*', ms=8)
         plt.show()
 
+    if len(peak_idxs) % 2 == 1:
+        # Remove border lines with slightly larger margin
+        peak_idxs = remove_border_lines(
+            profile_vert, peak_idxs, margin + 5, margin + 5,
+        )
     assert len(peak_idxs) in [2, 4, 6], \
         "wrong number of vertical lines detected: {}".format(len(peak_idxs))
     return np.reshape(peak_idxs, (-1, 2))
@@ -430,6 +435,10 @@ def get_ellipses(im_markers, start_coord, margin=5):
     ellipses = []
     feat_mat = np.zeros((nbr_labels, 2))
     count = 0
+    row_coord = []
+    col_coord = []
+    width = []
+    height = []
     for label in range(nbr_labels):
         x = stats[label, cv.CC_STAT_LEFT]
         y = stats[label, cv.CC_STAT_TOP]
@@ -446,6 +455,10 @@ def get_ellipses(im_markers, start_coord, margin=5):
                              'y': start_coord[1] + y + margin,
                              'w': w,
                              'h': h})
+            col_coord.append(int(start_coord[0] + x + margin))
+            row_coord.append(int(start_coord[1] + y + margin))
+            width.append(int(w))
+            height.append(int(h))
             count += 1
 
             # im_name = 'im_{}_{}.png'.format(idx, counter)
@@ -460,7 +473,7 @@ def get_ellipses(im_markers, start_coord, margin=5):
             # )
 
     feat_mat = feat_mat[:count, :]
-    return feat_mat, ellipses
+    return feat_mat, ellipses, row_coord, col_coord, width, height
 
 
 def compute_features(dir_name):

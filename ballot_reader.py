@@ -4,6 +4,7 @@ import glob
 import natsort
 import numpy as np
 import os
+import pandas as pd
 import pickle
 import time
 
@@ -13,6 +14,8 @@ import matplotlib.pyplot as plt
 
 import ballot_analysis.im_processing as im_proc
 import ballot_analysis.plot_utils as plt_utils
+
+DF_NAMES = ['col', 'row', 'ellipse_nbr', 'prob', 'label']
 
 
 def parse_args():
@@ -84,6 +87,7 @@ def ballot_analyzer(args):
     for idx, file_name in enumerate(file_names):
         start_time = time.time()
         im_name = os.path.basename(file_name)[:-4]
+        results_df = pd.DataFrame(columns=DF_NAMES)
         print("Analyzing idx: {}, name: {}".format(idx, im_name))
         im = cv.imread(file_name)
         # Check if images are upside down by finding QR code
@@ -135,17 +139,40 @@ def ballot_analyzer(args):
                 col_width = coords_col[0] + int((coords_col[1] - coords_col[0]) / 5)
                 im_markers = im_gray[coords_row[0]:coords_row[1], coords_col[0]:col_width]
                 # Extract ellipses and classify them
-                feat_mat, ellipses = im_proc.get_ellipses(
+                feat_mat, ellipses, row_coord, col_coord, width, height = \
+                    im_proc.get_ellipses(
                     im_markers,
                     (coords_col[0], coords_row[0]),
                 )
                 # Do binary classification for now
+                if feat_mat.shape[0] == 0:
+                    print("No ellipses detected")
+                    continue
                 labels = lr_model.predict(feat_mat)
+                probs = lr_model.predict_proba(feat_mat)
+                probs = probs[:, 1]
+                nbr_ellipses = labels.shape[0]
+                results = pd.DataFrame({
+                    'ellipse_nbr': np.arange(nbr_ellipses, dtype=np.int).tolist(),
+                    'row': (row * np.ones(nbr_ellipses, dtype=np.int)).tolist(),
+                    'col': (col * np.ones(nbr_ellipses, dtype=np.int)).tolist(),
+                    'prob': probs.tolist(),
+                    'label': labels.astype(np.int).tolist(),
+                    'row_coord': row_coord,
+                    'col_coord': col_coord,
+                    'width': width,
+                    'height': height,
+                })
+                results_df = results_df.append(
+                    results,
+                    ignore_index=True,
+                )
                 # Plot results
                 plt_utils.plot_ellipses(im_boxes, ellipses, labels)
-                # TODO: store box + ellipse coordinates and filled/empty values
 
         print("Processing time: {:.3f} s".format(time.time() - start_time))
+        # Write results
+        results_df.to_csv(os.path.join(output_dir, "results_" + im_name + ".csv"))
         # Write debug image
         cv.imwrite(os.path.join(output_dir, im_name + "_debug.png"), im_boxes)
         if debug:
