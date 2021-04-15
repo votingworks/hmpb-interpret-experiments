@@ -102,8 +102,6 @@ def ballot_analyzer(args):
             log_filter,
             debug,
         )
-        if debug:
-            plt.imshow(im_gray, cmap='gray'); plt.show()
         # Filter and threshold rotated image
         im_thresh = im_proc.filter_and_thresh(im_gray, log_filter)
 
@@ -113,9 +111,9 @@ def ballot_analyzer(args):
 
         # For plotting only
         im_boxes = np.array(cv.cvtColor(im_gray, cv.COLOR_GRAY2RGB))
-        # Plot detected horizontal and vertical lines
-        plt_utils.plot_hough_lines(im_hor, im_boxes, (255, 0, 0))
-        plt_utils.plot_hough_lines(im_vert, im_boxes, (0, 255, 0))
+        # # Plot detected horizontal and vertical lines
+        # plt_utils.plot_hough_lines(im_hor, im_boxes, (255, 0, 0))
+        # plt_utils.plot_hough_lines(im_vert, im_boxes, (0, 255, 0))
 
         # Create 1D profiles of lines and detect boxes as maxima
         try:
@@ -139,11 +137,12 @@ def ballot_analyzer(args):
                 col_width = coords_col[0] + int((coords_col[1] - coords_col[0]) / 5)
                 im_markers = im_gray[coords_row[0]:coords_row[1], coords_col[0]:col_width]
                 # Extract ellipses and classify them
+                start_coord = (coords_col[0], coords_row[0])
                 feat_mat, ellipses, row_coord, col_coord, width, height = \
                     im_proc.get_ellipses(
-                    im_markers,
-                    (coords_col[0], coords_row[0]),
-                )
+                        im_markers,
+                        start_coord,
+                    )
                 # Do binary classification for now
                 if feat_mat.shape[0] == 0:
                     print("No ellipses detected")

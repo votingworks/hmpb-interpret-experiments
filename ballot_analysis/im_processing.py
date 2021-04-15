@@ -217,7 +217,7 @@ def remove_writein_lines(peak_idxs, line_margin=125):
 
 def get_vert_peaks(im_vert,
                    margin=25,
-                   peak_min=.15,
+                   peak_min=.4,
                    dist=25,
                    debug=False):
     """
@@ -232,15 +232,33 @@ def get_vert_peaks(im_vert,
     :return np.array peak_idxs: Beginning and end locations in pixels of
         columns [nbr cols, 2]
     """
-    profile_vert = np.mean(im_vert[100:-500, :], 0)
+    profile_vert = np.mean(im_vert[100:1500, :], 0)
     peak_idxs, _ = scipy.signal.find_peaks(
         profile_vert,
         height=peak_min,
         distance=dist,
     )
     # Remove outliers
-    peak_idxs = remove_border_lines(profile_vert, peak_idxs, margin, margin)
-    peak_idxs = remove_neighbor_peaks(peak_idxs)
+    peak_idxs = remove_border_lines(
+        profile_vert,
+        peak_idxs,
+        margin,
+        margin,
+    )
+    if len(peak_idxs) > 2:
+        if peak_idxs[2] - peak_idxs[1] > 100 and peak_idxs[0] < 2 * margin:
+            peak_idxs = np.delete(peak_idxs, 0)
+        if peak_idxs[-2] - peak_idxs[-3] > 100 and\
+                peak_idxs[-1] < len(profile_vert) - 2 * margin:
+            peak_idxs = np.delete(peak_idxs, len(peak_idxs) - 1)
+
+    if len(peak_idxs) % 2 == 1:
+        peak_idxs = remove_border_lines(
+            profile_vert,
+            peak_idxs,
+            margin + 5,
+            margin + 5,
+        )
     assert len(peak_idxs) > 0, "No vertical lines detected"
 
     if debug:
@@ -249,11 +267,6 @@ def get_vert_peaks(im_vert,
             plt.plot(p, profile_vert[p], 'g*', ms=8)
         plt.show()
 
-    if len(peak_idxs) % 2 == 1:
-        # Remove border lines with slightly larger margin
-        peak_idxs = remove_border_lines(
-            profile_vert, peak_idxs, margin + 5, margin + 5,
-        )
     assert len(peak_idxs) in [2, 4, 6], \
         "wrong number of vertical lines detected: {}".format(len(peak_idxs))
     return np.reshape(peak_idxs, (-1, 2))
@@ -285,7 +298,7 @@ def get_hor_peaks(im_column,
         distance=dist,
     )
     # Remove outliers
-    peak_idxs = remove_border_lines(profile_hor, peak_idxs, 25, margin)
+    peak_idxs = remove_border_lines(profile_hor, peak_idxs, 50, margin)
     if len(peak_idxs) <= 1:
         print("Only found {} horizontal lines detected, proceeding "
               "with whole length of column".format(len(peak_idxs)))
@@ -423,10 +436,14 @@ def get_ellipses(im_markers, start_coord, margin=5):
     Filter out those of appropriate width and height.
     """
     im_thresh = im_markers[margin:-margin, margin:-margin]
-    im_thresh = (im_thresh < 50).astype(np.uint8)
+    im_thresh = cv.GaussianBlur(im_thresh, (7, 7), 3)
+    im_thresh = (im_thresh < 175).astype(np.uint8)
+    # kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+    # im_roi = cv.morphologyEx(im_thresh, cv.MORPH_CLOSE, kernel)
     im_roi = binary_fill_holes(im_thresh).astype(np.uint8)
     kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (15, 15))
     im_roi = cv.morphologyEx(im_roi, cv.MORPH_OPEN, kernel)
+
     nbr_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
         im_roi,
         4,
@@ -444,33 +461,37 @@ def get_ellipses(im_markers, start_coord, margin=5):
         y = stats[label, cv.CC_STAT_TOP]
         w = stats[label, cv.CC_STAT_WIDTH]
         h = stats[label, cv.CC_STAT_HEIGHT]
-        if (50 < w < 100) and (30 < h < 90):
+        if (50 < w) and (30 < h < 90) and (10 < x < 55):
+            if w > 100:
+                w = 100
             im_out = im_markers[
                      y + margin:y + h + margin,
                      x + margin:x + w + margin,
                      ]
-            feat_mat[count, 0] = np.mean(im_out)
-            feat_mat[count, 1] = np.std(im_out)
-            ellipses.append({'x': start_coord[0] + x + margin,
-                             'y': start_coord[1] + y + margin,
-                             'w': w,
-                             'h': h})
-            col_coord.append(int(start_coord[0] + x + margin))
-            row_coord.append(int(start_coord[1] + y + margin))
-            width.append(int(w))
-            height.append(int(h))
-            count += 1
-
-            # im_name = 'im_{}_{}.png'.format(idx, counter)
-            # counter += 1
-            # cv.imwrite(os.path.join(write_dir, im_name), im_out)
-            # cv.rectangle(
-            #     im_output,
-            #     (start_coord[0] + x + margin, start_coord[1] + y + margin),
-            #     (start_coord[0] + x + w + margin, start_coord[1] + y + h + margin),
-            #     (255, 0, 255),
-            #     3,
-            # )
+            cx = w // 2
+            cy = h // 2
+            im_i = im_roi[y + cy - 10:y + cy + 10, x + cx - 10:x + cx + 10]
+            center_i = np.mean(im_i)
+            # print(label, center_i, w, h, x)
+            if center_i > .95:
+                feat_mat[count, 0] = np.mean(im_out)
+                feat_mat[count, 1] = np.mean(im_out[10:-10, 10:-10])
+                ellipses.append({'x': start_coord[0] + x + margin,
+                                 'y': start_coord[1] + y + margin,
+                                 'w': w,
+                                 'h': h})
+                col_coord.append(int(start_coord[0] + x + margin))
+                row_coord.append(int(start_coord[1] + y + margin))
+                width.append(int(w))
+                height.append(int(h))
+                count += 1
+                # cv.rectangle(
+                #     im_boxes,
+                #     (start_coord[0] + x + margin, start_coord[1] + y + margin),
+                #     (start_coord[0] + x + w + margin, start_coord[1] + y + h + margin),
+                #     (255, 0, 255),
+                #     3,
+                # )
 
     feat_mat = feat_mat[:count, :]
     return feat_mat, ellipses, row_coord, col_coord, width, height
@@ -488,9 +509,9 @@ def compute_features(dir_name):
     )
     feat_mat = np.zeros((len(file_names), 2))
     for i, file_name in enumerate(file_names):
-        im = cv.imread(file_name)
+        im = cv.imread(file_name, cv.IMREAD_GRAYSCALE)
         feat_mat[i, 0] = np.mean(im)
-        feat_mat[i, 1] = np.std(im)
+        feat_mat[i, 1] = np.mean(im[10:-10, 10:-10])
     return feat_mat
 
 
